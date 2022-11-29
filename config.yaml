@@ -1,0 +1,4 @@
+- region: eu-west-1
+  stack_name: Your Stack name
+
+- stack_name: Other Stack name
