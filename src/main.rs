@@ -1,23 +1,29 @@
-use std::{collections::HashMap, fs, future};
+use std::{collections::HashMap, fs, path::PathBuf};
 
-use aws_config::{meta::region::RegionProviderChain, provider_config::ProviderConfig};
+use aws_config::meta::region::RegionProviderChain;
 use aws_types::region::Region;
 use futures;
 use serde::{Deserialize, Serialize};
 
+pub mod config;
+
 #[tokio::main]
 async fn main() -> Result<(), aws_sdk_cloudformation::Error> {
-    let config = load_config();
-    dbg!(&config);
+    let config_path = PathBuf::from("./config.yaml");
+    let result = config::parse(&config_path);
+    dbg!(result);
 
-    let handles = config.iter().fold(vec![], |mut acc, config_entry| {
-        let handle = tokio::spawn(generate(config_entry.to_owned()));
-        acc.push(handle);
-        return acc;
-    });
-    futures::future::join_all(handles).await;
+    // let config = load_config();
+    // dbg!(&config);
 
-    Ok(())
+    // let handles = config.iter().fold(vec![], |mut acc, config_entry| {
+    //     let handle = tokio::spawn(generate(config_entry.to_owned()));
+    //     acc.push(handle);
+    //     return acc;
+    // });
+    // futures::future::join_all(handles).await;
+
+    return Ok(());
 }
 
 fn generate_typings_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
