@@ -1,7 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, ops::Deref, path::PathBuf};
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_types::region::Region;
+use config::ConfigEntry;
 use futures;
 use serde::{Deserialize, Serialize};
 
@@ -10,54 +11,16 @@ pub mod config;
 #[tokio::main]
 async fn main() -> Result<(), aws_sdk_cloudformation::Error> {
     let config_path = PathBuf::from("./config.yaml");
-    let result = config::parse(&config_path);
-    dbg!(result);
+    let config = config::parse(&config_path).unwrap();
 
-    // let config = load_config();
-    // dbg!(&config);
-
-    // let handles = config.iter().fold(vec![], |mut acc, config_entry| {
-    //     let handle = tokio::spawn(generate(config_entry.to_owned()));
-    //     acc.push(handle);
-    //     return acc;
-    // });
-    // futures::future::join_all(handles).await;
-
-    return Ok(());
-}
-
-fn generate_typings_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
-    let contents = outputs
-        .into_iter()
-        .fold(String::from(""), |mut acc, output| {
-            let output_key = output.output_key().unwrap();
-            let type_entry = format!("{}: string,\n", output_key);
-            acc.push_str(&type_entry);
-            return acc;
-        });
-
-    return format!(
-        "declare module NodeJs {{ interface ProcessEnv {{ {} }} }}",
-        contents
-    );
-}
-
-fn generate_json_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
-    let init: HashMap<&str, &str> = HashMap::new();
-    let contents = outputs.into_iter().fold(init, |mut acc, output| {
-        let key = output.output_key().unwrap();
-        let value = output.output_value().unwrap();
-        acc.insert(key, value);
+    let handles = config.iter().fold(vec![], |mut acc, config_entry| {
+        let handle = tokio::spawn(generate(config_entry));
+        acc.push(handle);
         return acc;
     });
+    futures::future::join_all(handles).await;
 
-    return serde_json::to_string(&contents).unwrap();
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct ConfigEntry {
-    region: Option<String>,
-    stack_name: String,
+    return Ok(());
 }
 
 fn load_config() -> Vec<ConfigEntry> {
@@ -70,15 +33,16 @@ fn load_config() -> Vec<ConfigEntry> {
     return config;
 }
 
-async fn generate(config: ConfigEntry) -> Result<(), aws_sdk_cloudformation::Error> {
-    let region = match config.region {
+async fn generate(config: &ConfigEntry) -> Result<(), aws_sdk_cloudformation::Error> {
+    let region = match config.region.as_ref() {
+        // how to make it work?
         Some(provided_region) => Region::new(provided_region),
         None => RegionProviderChain::default_provider()
             .region()
             .await
             .unwrap(),
     };
-    let stack_name = config.stack_name.as_str();
+    let stack_name = config.stack_name.as_ref().unwrap();
 
     let sdk_config = aws_config::from_env().region(region).load().await;
     let client = aws_sdk_cloudformation::Client::new(&sdk_config);
@@ -120,4 +84,32 @@ async fn generate(config: ConfigEntry) -> Result<(), aws_sdk_cloudformation::Err
     println!("{}", json_contents);
 
     return Ok(());
+}
+
+fn generate_typings_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
+    let contents = outputs
+        .into_iter()
+        .fold(String::from(""), |mut acc, output| {
+            let output_key = output.output_key().unwrap();
+            let type_entry = format!("{}: string,\n", output_key);
+            acc.push_str(&type_entry);
+            return acc;
+        });
+
+    return format!(
+        "declare module NodeJs {{ interface ProcessEnv {{ {} }} }}",
+        contents
+    );
+}
+
+fn generate_json_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
+    let init: HashMap<&str, &str> = HashMap::new();
+    let contents = outputs.into_iter().fold(init, |mut acc, output| {
+        let key = output.output_key().unwrap();
+        let value = output.output_value().unwrap();
+        acc.insert(key, value);
+        return acc;
+    });
+
+    return serde_json::to_string(&contents).unwrap();
 }
