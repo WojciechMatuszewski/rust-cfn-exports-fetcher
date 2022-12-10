@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::PathBuf};
+use std::{io, path::PathBuf};
 use validator::{Validate, ValidationError};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -37,14 +37,11 @@ pub struct ConfigEntry {
 }
 
 type Config = Vec<ConfigEntry>;
-pub fn parse(path: &PathBuf) -> Result<Config, Error> {
-    let contents = match fs::read_to_string(path) {
-        Ok(raw_contents) => Ok(raw_contents),
-        Err(error) => match error.kind() {
-            io::ErrorKind::NotFound => Err(Error::FileNotFound(path.display().to_string())),
-            _ => Err(Error::Unknown(error.to_string())),
-        },
-    }?;
+pub fn parse(mut reader: impl io::Read) -> Result<Config, Error> {
+    let mut contents = String::new();
+    reader.read_to_string(&mut contents).map_err(|error| {
+        return Error::ParsingError(error.to_string());
+    })?;
 
     let config: Config = match serde_yaml::from_str(&contents) {
         Ok(data) => Ok(data),
@@ -99,8 +96,7 @@ fn validate_typescript_file(typescript_file: &ConfigFile) -> Result<(), Validati
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Write;
+    use std::io;
     use std::path::PathBuf;
 
     use super::parse;
@@ -108,34 +104,17 @@ mod tests {
     use super::ConfigEntry;
     use super::ConfigFile;
     use super::Error;
-    use tempfile::tempdir;
 
     #[test]
-    fn file_does_not_exist() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
+    fn parsing_error() {
+        // Fails when used with non-utf-8 characters
+        let input = io::Cursor::new(String::from("Côte d'Ivoire"));
 
-        let result = parse(&file_path);
-        assert_eq!(true, result.is_err());
-        match result.err().unwrap() {
-            Error::FileNotFound(_) => {}
-            _ => panic!("Expected `FileNotFound` error"),
-        }
-    }
-
-    #[test]
-    fn file_wrong_format() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "Not yaml").unwrap();
-
-        let result = parse(&file_path);
+        let result = parse(input);
         assert_eq!(true, result.is_err());
         match result.err().unwrap() {
             Error::ParsingError(_) => {}
-            _ => panic!("Expected `FileNotFound` error"),
+            _ => panic!("Expected `ValidationError` error"),
         }
     }
 
@@ -154,14 +133,9 @@ mod tests {
 
         let config: Config = vec![config_entry];
         let config_contents = serde_yaml::to_string(&config).unwrap();
+        let input = io::Cursor::new(config_contents);
 
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", config_contents).unwrap();
-
-        let result = parse(&file_path);
+        let result = parse(input);
         assert_eq!(true, result.is_err());
         match result.err().unwrap() {
             Error::ValidationError(_) => {}
@@ -184,14 +158,9 @@ mod tests {
 
         let config: Config = vec![config_entry];
         let config_contents = serde_yaml::to_string(&config).unwrap();
+        let input = io::Cursor::new(config_contents);
 
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", config_contents).unwrap();
-
-        let result = parse(&file_path);
+        let result = parse(input);
         assert_eq!(false, result.is_err());
     }
 }
