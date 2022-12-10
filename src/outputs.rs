@@ -1,7 +1,21 @@
-use std::collections::HashMap;
+
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_cloudformation::Region;
+
+use crate::config::ConfigEntry;
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum Error {
+    #[error("Service error ocurred: {0}.")]
+    ServiceError(String),
+
+    #[error("Unknown error ocurred: {0}.")]
+    UnknownError(String),
+
+    #[error("Stack not found")]
+    NotFoundError(String),
+}
 
 pub struct Stack {
     pub stack_name: String,
@@ -10,9 +24,12 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub async fn new(stack_name: String, region: Option<String>) -> Self {
+    pub async fn new(config_entry: &ConfigEntry) -> Self {
+        let region = config_entry.region.as_ref();
+        let stack_name = config_entry.stack_name.as_ref().unwrap().clone();
+
         let region = match region {
-            Some(provided_region) => Region::new(provided_region),
+            Some(provided_region) => Region::new(provided_region.clone()),
             None => RegionProviderChain::default_provider()
                 .region()
                 .await
@@ -29,7 +46,7 @@ impl Stack {
         return Self { stack_name, client };
     }
 
-    pub async fn generate_outputs(&self) -> Result<(), aws_sdk_cloudformation::Error> {
+    pub async fn get_outputs(&self) -> Result<Vec<aws_sdk_cloudformation::model::Output>, Error> {
         let result = self
             .client
             .describe_stacks()
@@ -40,68 +57,37 @@ impl Stack {
         let result = match result {
             Ok(data) => data,
             Err(aws_sdk_cloudformation::types::SdkError::ServiceError { err, .. }) => {
-                println!("Service error: {}", err.message().unwrap());
-                return Ok(());
+                return Err(Error::ServiceError(err.to_string()));
             }
-            Err(err) => {
-                println!("Unknown error: {}", err.to_string());
-                return Ok(());
-            }
+            Err(err) => return Err(Error::UnknownError(err.to_string())),
         };
 
         let stacks = result.stacks().unwrap_or_else(|| &[]);
         if stacks.len() == 0 {
-            println!("Stack: {} not found", &self.stack_name);
-            return Ok(());
+            return Err(Error::NotFoundError(self.stack_name.clone()));
         }
 
         let outputs = stacks
             .get(0)
             .expect("Should not get here")
             .outputs()
-            .unwrap_or_else(|| &[]);
+            .unwrap_or_else(|| &[])
+            .to_vec();
 
-        if outputs.len() == 0 {
-            println!("Stack: {} does not have any outputs", &self.stack_name);
-            return Ok(());
-        }
-
-        let typings_contents = generate_typings_file(outputs);
-        println!("{}", typings_contents);
-
-        let json_contents = generate_json_file(outputs);
-        println!("{}", json_contents);
-
-        return Ok(());
+        return Ok(outputs);
     }
+
+    // pub async fn generate_outputs(&self) -> Result<(), aws_sdk_cloudformation::Error> {
+    //     let typings_contents = generate_typings_file(outputs);
+    //     println!("{}", typings_contents);
+
+    //     let json_contents = generate_json_file(outputs);
+    //     println!("{}", json_contents);
+
+    //     return Ok(());
+    // }
 }
 
-fn generate_typings_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
-    let contents = outputs
-        .into_iter()
-        .fold(String::from(""), |mut acc, output| {
-            let output_key = output.output_key().unwrap();
-            let type_entry = format!("{}: string,\n", output_key);
+// fn generate_typings_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {}
 
-            acc.push_str(&type_entry);
-            return acc;
-        });
-
-    return format!(
-        "declare module NodeJs {{ interface ProcessEnv {{ {} }} }}",
-        contents
-    );
-}
-
-fn generate_json_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {
-    let init: HashMap<&str, &str> = HashMap::new();
-    let contents = outputs.into_iter().fold(init, |mut acc, output| {
-        let key = output.output_key().unwrap();
-        let value = output.output_value().unwrap();
-
-        acc.insert(key, value);
-        return acc;
-    });
-
-    return serde_json::to_string(&contents).unwrap();
-}
+// fn generate_json_file(outputs: &[aws_sdk_cloudformation::model::Output]) -> String {}

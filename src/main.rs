@@ -2,6 +2,7 @@ use std::{fs, path::PathBuf};
 
 pub mod config;
 pub mod outputs;
+pub mod writer;
 
 #[tokio::main]
 async fn main() -> Result<(), aws_sdk_cloudformation::Error> {
@@ -10,11 +11,13 @@ async fn main() -> Result<(), aws_sdk_cloudformation::Error> {
 
     let config = config::parse(file).unwrap();
     for config_entry in config {
-        outputs::Stack::new(config_entry.stack_name.unwrap(), config_entry.region)
+        let outputs = outputs::Stack::new(&config_entry)
             .await
-            .generate_outputs()
+            .get_outputs()
             .await
-            .unwrap()
+            .unwrap();
+
+        writer::write(&config_entry, &outputs);
     }
 
     return Ok(());
