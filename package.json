@@ -1,6 +1,6 @@
 {
   "name": "cfn-exports-fetcher",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main": "start.js",
   "directories": {
     "test": "tests"
